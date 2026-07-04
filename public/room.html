@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WatchTogether — Room</title>
+  <meta name="description" content="Watch YouTube in sync with your friend in this WatchTogether room." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body class="room-page">
+
+  <!-- Top bar -->
+  <header class="room-header">
+    <a href="/" class="logo small">
+      <span class="logo-icon">🎬</span>
+      <span class="logo-text">WatchTogether</span>
+    </a>
+
+    <div class="room-info">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text" class="status-text">Connecting…</span>
+    </div>
+
+    <div class="room-code-display">
+      <span class="room-label">Room</span>
+      <code id="room-code-display">——</code>
+      <button class="copy-btn" id="copy-link-btn" title="Copy invite link">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+        </svg>
+        <span id="copy-label">Copy Link</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main layout -->
+  <main class="room-main">
+
+    <!-- ── Left: Video + Host Controls ─────────────────────────────────── -->
+    <section class="video-section">
+
+      <!-- Host controls (hidden for non-hosts) -->
+      <div class="host-controls glass-card-sm hidden" id="host-controls">
+        <span class="host-badge">👑 Host</span>
+        <div class="host-url-row">
+          <input
+            type="text"
+            id="new-video-url"
+            class="input-field input-sm"
+            placeholder="Paste new YouTube URL to change video…"
+          />
+          <button class="btn btn-xs btn-primary" id="change-video-btn">Change</button>
+        </div>
+      </div>
+
+      <!-- YouTube Player wrapper -->
+      <div class="player-wrapper">
+        <div id="yt-player"></div>
+        <!-- Overlay shown while waiting for second user or loading -->
+        <div class="player-overlay" id="player-overlay">
+          <div class="spinner"></div>
+          <p id="overlay-msg">Loading player…</p>
+        </div>
+      </div>
+
+      <!-- Video title (populated once player is ready) -->
+      <div class="video-meta" id="video-meta">
+        <span id="video-title" class="video-title-text"></span>
+      </div>
+
+    </section>
+
+    <!-- ── Right: Users + Chat ──────────────────────────────────────────── -->
+    <aside class="chat-section">
+
+      <!-- Connected users -->
+      <div class="users-panel glass-card-sm">
+        <h3 class="panel-title">In the room</h3>
+        <ul class="user-list" id="user-list">
+          <!-- Populated by JS -->
+        </ul>
+      </div>
+
+      <!-- Chat -->
+      <div class="chat-panel glass-card-sm">
+        <h3 class="panel-title">Live Chat</h3>
+
+        <div class="messages-wrapper" id="messages-wrapper">
+          <ul class="messages-list" id="messages-list">
+            <!-- Chat messages injected here -->
+          </ul>
+        </div>
+
+        <!-- Typing indicator -->
+        <div class="typing-indicator hidden" id="typing-indicator">
+          <span id="typing-text"></span>
+          <span class="typing-dots"><span></span><span></span><span></span></span>
+        </div>
+
+        <div class="chat-input-row">
+          <input
+            type="text"
+            id="chat-input"
+            class="input-field input-chat"
+            placeholder="Say something…"
+            maxlength="300"
+            autocomplete="off"
+          />
+          <button class="btn btn-send" id="send-btn" title="Send">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+    </aside>
+
+  </main>
+
+  <!-- YouTube IFrame API (async) -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/room.js"></script>
+</body>
+</html>

@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WatchTogether — Watch YouTube in Sync</title>
+  <meta name="description" content="Watch YouTube videos in perfect sync with friends. Create a room, share the code, and enjoy together." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body class="home-page">
+
+  <!-- Animated background orbs -->
+  <div class="bg-orb orb-1"></div>
+  <div class="bg-orb orb-2"></div>
+  <div class="bg-orb orb-3"></div>
+
+  <div class="home-wrapper">
+
+    <!-- Hero Header -->
+    <header class="hero-header">
+      <div class="logo">
+        <span class="logo-icon">🎬</span>
+        <span class="logo-text">WatchTogether</span>
+      </div>
+      <p class="hero-tagline">Watch YouTube in perfect sync with friends — anywhere, instantly.</p>
+    </header>
+
+    <!-- Cards row -->
+    <div class="cards-row">
+
+      <!-- Create Room Card -->
+      <div class="glass-card" id="create-card">
+        <div class="card-badge new-badge">Create</div>
+        <h2 class="card-title">Start a Watch Party</h2>
+        <p class="card-subtitle">Paste a YouTube link and invite your friend.</p>
+
+        <div class="form-group">
+          <label for="create-name">Your display name</label>
+          <input
+            type="text"
+            id="create-name"
+            class="input-field"
+            placeholder="e.g. Alex"
+            maxlength="24"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="video-url">YouTube URL or video ID</label>
+          <input
+            type="text"
+            id="video-url"
+            class="input-field"
+            placeholder="https://youtube.com/watch?v=..."
+            autocomplete="off"
+          />
+        </div>
+
+        <button class="btn btn-primary" id="create-btn">
+          <span class="btn-text">Create Room</span>
+          <span class="btn-icon">→</span>
+        </button>
+
+        <p class="error-msg hidden" id="create-error"></p>
+      </div>
+
+      <!-- Divider -->
+      <div class="cards-divider">
+        <span>or</span>
+      </div>
+
+      <!-- Join Room Card -->
+      <div class="glass-card" id="join-card">
+        <div class="card-badge join-badge">Join</div>
+        <h2 class="card-title">Join a Room</h2>
+        <p class="card-subtitle">Enter the room code your friend shared.</p>
+
+        <div class="form-group">
+          <label for="join-name">Your display name</label>
+          <input
+            type="text"
+            id="join-name"
+            class="input-field"
+            placeholder="e.g. Sam"
+            maxlength="24"
+            autocomplete="off"
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="room-code">Room code</label>
+          <input
+            type="text"
+            id="room-code"
+            class="input-field room-code-input"
+            placeholder="e.g. A3F7E2"
+            maxlength="8"
+            autocomplete="off"
+          />
+        </div>
+
+        <button class="btn btn-secondary" id="join-btn">
+          <span class="btn-text">Join Room</span>
+          <span class="btn-icon">→</span>
+        </button>
+
+        <p class="error-msg hidden" id="join-error"></p>
+      </div>
+
+    </div><!-- /.cards-row -->
+
+    <footer class="home-footer">
+      <p>No account needed · Works in any modern browser · Powered by YouTube IFrame API</p>
+    </footer>
+
+  </div><!-- /.home-wrapper -->
+
+  <!-- Loading overlay -->
+  <div class="loading-overlay hidden" id="loading-overlay">
+    <div class="spinner"></div>
+    <p id="loading-msg">Creating room…</p>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/home.js"></script>
+</body>
+</html>
