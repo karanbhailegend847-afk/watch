@@ -1,4 +1,4 @@
-/* room.js — WatchTogether room page
+/* room.js — WatchTogether room page (with long-movie sync & reconnect support)
    KEY FIX: join-room is emitted on socket CONNECT (not inside onPlayerReady),
    so the room join is instant and doesn't depend on YouTube loading.
 */
@@ -92,6 +92,28 @@ socket.on('disconnect', () => {
 socket.on('connect_error', () => {
   setStatus('error', 'Connection failed');
   overlayMsg.textContent = '⚠ Cannot reach server. Retrying…';
+});
+
+// On reconnect — rejoin the room and resync video position
+socket.on('reconnect', () => {
+  setStatus('connected', 'Reconnected');
+  overlayMsg.textContent = 'Rejoining room…';
+  playerOverlay.style.display = 'flex';
+  playerOverlay.style.opacity = '1';
+  socket.emit('join-room', { displayName: DISPLAY_NAME, roomId: ROOM_ID });
+});
+
+// Heartbeat sync — server sends authoritative time every 30s during playback
+// Corrects drift on long movies without interrupting playback
+socket.on('heartbeat-sync', ({ currentTime, isPlaying }) => {
+  if (!player || !playerReady) return;
+  const playerTime = player.getCurrentTime();
+  const drift = Math.abs(playerTime - currentTime);
+  // Only correct if drifted more than 3 seconds (avoids jitter on short seeks)
+  if (drift > 3) {
+    console.log(`[heartbeat] correcting drift of ${drift.toFixed(1)}s`);
+    applySyncSilently(isPlaying ? 'play' : 'pause', currentTime);
+  }
 });
 
 // ─── Socket events — room ─────────────────────────────────────────────────────
