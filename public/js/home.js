@@ -21,7 +21,7 @@ if (savedName) {
   joinName.value = savedName;
 }
 
-// Pre-fill room code if URL has ?room=XXX (e.g. shared link)
+// Pre-fill room code if URL has ?room=XXX (shared invite link)
 const urlParams = new URLSearchParams(window.location.search);
 const prefilledRoom = urlParams.get('room');
 if (prefilledRoom) {
@@ -33,7 +33,7 @@ if (prefilledRoom) {
 function showError(el, msg) {
   el.textContent = msg;
   el.classList.remove('hidden');
-  setTimeout(() => el.classList.add('hidden'), 4000);
+  setTimeout(() => el.classList.add('hidden'), 5000);
 }
 
 function showLoading(msg) {
@@ -48,6 +48,21 @@ function hideLoading() {
 function saveName(name) {
   localStorage.setItem('wt_display_name', name.trim());
 }
+
+// ─── Connection feedback ──────────────────────────────────────────────────────
+let connectTimeout = null;
+socket.on('connect', () => {
+  clearTimeout(connectTimeout);
+});
+socket.on('connect_error', () => {
+  // Show error if socket can't connect after 5s
+  clearTimeout(connectTimeout);
+  connectTimeout = setTimeout(() => {
+    hideLoading();
+    showError(joinError, 'Cannot connect to server. Is it running?');
+    showError(createError, 'Cannot connect to server. Is it running?');
+  }, 5000);
+});
 
 // ─── Create Room ─────────────────────────────────────────────────────────────
 createBtn.addEventListener('click', () => {
@@ -66,7 +81,7 @@ createBtn.addEventListener('click', () => {
 socket.on('room-created', ({ roomId, videoId }) => {
   hideLoading();
   const name = createName.value.trim();
-  // Navigate to the room page
+  // Navigate to room — actual socket join happens from room.html on connect
   window.location.href = `/room.html?room=${roomId}&name=${encodeURIComponent(name)}&vid=${videoId}`;
 });
 
@@ -82,28 +97,33 @@ function doJoin() {
   if (!code) { showError(joinError, 'Please enter a room code.'); return; }
 
   saveName(name);
-  showLoading(`Joining room ${code}…`);
+  showLoading(`Checking room ${code}…`);
 
-  socket.emit('join-room', { displayName: name, roomId: code });
+  // check-room only VALIDATES the room exists and gets the videoId
+  // The actual join happens from room.html once the socket connects there
+  socket.emit('check-room', { roomId: code });
 }
 
-socket.on('room-joined', ({ roomId, videoId, playbackState }) => {
+socket.on('room-checked', ({ roomId, videoId }) => {
   hideLoading();
   const name = joinName.value.trim();
-  const state = encodeURIComponent(JSON.stringify(playbackState));
-  window.location.href = `/room.html?room=${roomId}&name=${encodeURIComponent(name)}&vid=${videoId}&state=${state}`;
+  window.location.href = `/room.html?room=${roomId}&name=${encodeURIComponent(name)}&vid=${videoId}`;
 });
 
 // ─── Errors ───────────────────────────────────────────────────────────────────
 socket.on('room-error', ({ message }) => {
   hideLoading();
-  // Show error in the most recently active card
-  const activeCreate = document.activeElement.closest('#create-card');
-  if (activeCreate) showError(createError, message);
-  else showError(joinError, message);
+  // Show error in whichever card the user was interacting with
+  const joinCardActive = document.activeElement &&
+    (document.activeElement.closest('#join-card') || document.activeElement === joinBtn);
+  if (joinCardActive || roomCode.value.trim()) {
+    showError(joinError, message);
+  } else {
+    showError(createError, message);
+  }
 });
 
-// Enter key shortcuts
+// ─── Keyboard shortcuts ───────────────────────────────────────────────────────
 createName.addEventListener('keydown', e => { if (e.key === 'Enter') videoUrl.focus(); });
 videoUrl.addEventListener('keydown',   e => { if (e.key === 'Enter') createBtn.click(); });
 joinName.addEventListener('keydown',   e => { if (e.key === 'Enter') roomCode.focus(); });

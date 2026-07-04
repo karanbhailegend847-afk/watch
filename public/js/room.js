@@ -1,17 +1,15 @@
-/* room.js — WatchTogether room page logic
-   Handles: YouTube IFrame API, Socket.io sync, live chat, typing indicator,
-            host controls, user list, reconnect on refresh
+/* room.js — WatchTogether room page
+   KEY FIX: join-room is emitted on socket CONNECT (not inside onPlayerReady),
+   so the room join is instant and doesn't depend on YouTube loading.
 */
 
 // ─── Parse URL params ─────────────────────────────────────────────────────────
 const params       = new URLSearchParams(window.location.search);
-const ROOM_ID      = params.get('room') || '';
+const ROOM_ID      = (params.get('room') || '').toUpperCase();
 const DISPLAY_NAME = decodeURIComponent(params.get('name') || 'Anonymous');
 const INITIAL_VID  = params.get('vid') || '';
-let   initialState = null;
-try { initialState = JSON.parse(decodeURIComponent(params.get('state') || 'null')); } catch(_) {}
 
-// Redirect home if missing params
+// Redirect home if missing critical params
 if (!ROOM_ID || !INITIAL_VID) {
   window.location.href = '/';
 }
@@ -37,20 +35,21 @@ const chatInput        = document.getElementById('chat-input');
 const sendBtn          = document.getElementById('send-btn');
 
 // ─── State ────────────────────────────────────────────────────────────────────
-let player          = null;
-let isHost          = false;
-let isSyncing       = false;   // Prevent echo: when we're applying an incoming sync
-let syncTimeout     = null;
-let typingTimer     = null;
-let isTyping        = false;
-let remoteTypers    = {};       // { name: timeoutId }
-let currentVideoId  = INITIAL_VID;
-let playerReady     = false;
+let player            = null;
+let playerReady       = false;
+let isHost            = false;
+let isSyncing         = false;
+let syncTimeout       = null;
+let isTyping          = false;
+let typingTimer       = null;
+let remoteTypers      = {};
+let currentVideoId    = INITIAL_VID;
+let pendingState      = null; // Playback state received before player was ready
 
-// ─── Socket.io ───────────────────────────────────────────────────────────────
+// ─── Socket setup ─────────────────────────────────────────────────────────────
 const socket = io();
 
-// ─── Room code display & copy link ───────────────────────────────────────────
+// ─── Room UI setup ────────────────────────────────────────────────────────────
 roomCodeDisplay.textContent = ROOM_ID;
 
 copyLinkBtn.addEventListener('click', () => {
@@ -62,6 +61,9 @@ copyLinkBtn.addEventListener('click', () => {
       copyLabel.textContent = 'Copy Link';
       copyLinkBtn.style.color = '';
     }, 2000);
+  }).catch(() => {
+    // Fallback for browsers that block clipboard
+    prompt('Copy this invite link:', `${window.location.origin}/?room=${ROOM_ID}`);
   });
 });
 
@@ -71,8 +73,88 @@ function setStatus(type, text) {
   statusText.textContent = text;
 }
 
+setStatus('', 'Connecting…');
+
+// ─── Socket events — connection lifecycle ─────────────────────────────────────
+
+socket.on('connect', () => {
+  setStatus('connected', 'Connected');
+  overlayMsg.textContent = 'Joining room…';
+
+  // ★ KEY FIX: Join the room immediately on connect — don't wait for YouTube
+  socket.emit('join-room', { displayName: DISPLAY_NAME, roomId: ROOM_ID });
+});
+
+socket.on('disconnect', () => {
+  setStatus('error', 'Disconnected — reconnecting…');
+});
+
+socket.on('connect_error', () => {
+  setStatus('error', 'Connection failed');
+  overlayMsg.textContent = '⚠ Cannot reach server. Retrying…';
+});
+
+// ─── Socket events — room ─────────────────────────────────────────────────────
+
+socket.on('room-joined', ({ isHost: hostFlag, playbackState }) => {
+  if (hostFlag) becomeHost();
+
+  // Store playback state — will be applied once the player is ready
+  if (playbackState) {
+    pendingState = playbackState;
+    if (playerReady) applyState(pendingState);
+  }
+
+  overlayMsg.textContent = 'Waiting for your friend to join…';
+});
+
+socket.on('room-error', ({ message }) => {
+  setStatus('error', 'Error');
+  overlayMsg.textContent = `⚠ ${message}`;
+  addSystemMessage(message);
+});
+
+socket.on('user-list', ({ users }) => {
+  renderUserList(users);
+
+  if (users.length >= 2) {
+    // Both users are in the room — hide the overlay
+    playerOverlay.style.transition = 'opacity 0.4s';
+    playerOverlay.style.opacity = '0';
+    setTimeout(() => { playerOverlay.style.display = 'none'; }, 400);
+  } else {
+    // Back to one user (friend left) — show overlay again
+    playerOverlay.style.display = 'flex';
+    playerOverlay.style.opacity = '1';
+    overlayMsg.textContent = 'Waiting for your friend to join…';
+  }
+});
+
+socket.on('user-joined', ({ displayName }) => {
+  addSystemMessage(`${displayName} joined 🎉`);
+});
+
+socket.on('user-left', ({ displayName }) => {
+  addSystemMessage(`${displayName} left the room`);
+});
+
+socket.on('promoted-to-host', () => {
+  becomeHost();
+  addSystemMessage('You are now the host 👑');
+});
+
+socket.on('video-changed', ({ videoId }) => {
+  currentVideoId = videoId;
+  if (player && playerReady) {
+    isSyncing = true;
+    player.loadVideoById(videoId);
+    setTimeout(() => { isSyncing = false; }, 1000);
+  }
+  addSystemMessage('Host changed the video.');
+});
+
 // ─── YouTube IFrame API ───────────────────────────────────────────────────────
-// Called automatically by the YouTube API script when ready
+// Called automatically by the YT script tag when API is ready
 window.onYouTubeIframeAPIReady = function () {
   player = new YT.Player('yt-player', {
     videoId: currentVideoId,
@@ -93,45 +175,31 @@ window.onYouTubeIframeAPIReady = function () {
 
 function onPlayerReady(event) {
   playerReady = true;
-  overlayMsg.textContent = 'Waiting for your friend to join…';
 
-  // If we joined an existing session, seek to the right time
-  if (initialState) {
-    let seekTo = initialState.currentTime || 0;
-    if (initialState.isPlaying) {
-      // Compensate for time elapsed since last sync
-      const elapsed = (Date.now() - (initialState.lastSyncedAt || Date.now())) / 1000;
-      seekTo = Math.max(0, seekTo + elapsed);
-    }
-    applySyncSilently('seek', seekTo);
-    if (initialState.isPlaying) {
-      setTimeout(() => applySyncSilently('play', seekTo), 300);
-    }
+  // Apply any playback state that arrived before the player was ready
+  if (pendingState) {
+    applyState(pendingState);
+    pendingState = null;
   }
 
-  // Try to get video title
+  // Try to display the video title
   try {
     const data = event.target.getVideoData();
     if (data && data.title) videoTitle.textContent = data.title;
-  } catch(_) {}
-
-  // Re-join the room via socket now that we're in the room page
-  socket.emit('join-room', { displayName: DISPLAY_NAME, roomId: ROOM_ID });
+  } catch (_) {}
 }
 
 function onPlayerStateChange(event) {
   if (!playerReady || isSyncing) return;
 
-  const stateMap = { 1: 'play', 2: 'pause', 3: 'seeking' };
-  const state    = event.data;
-  const time     = player.getCurrentTime();
+  const time = player.getCurrentTime();
 
-  if (state === YT.PlayerState.PLAYING) {
+  if (event.data === YT.PlayerState.PLAYING) {
     emitSync('play', time);
-  } else if (state === YT.PlayerState.PAUSED) {
+  } else if (event.data === YT.PlayerState.PAUSED) {
     emitSync('pause', time);
-  } else if (state === YT.PlayerState.BUFFERING) {
-    // Buffering often means a seek just happened
+  } else if (event.data === YT.PlayerState.BUFFERING) {
+    // Buffering almost always means a seek just happened
     emitSync('seek', time);
   }
 }
@@ -140,92 +208,54 @@ function emitSync(action, currentTime) {
   socket.emit('sync-playback', { roomId: ROOM_ID, action, currentTime });
 }
 
-// Apply an incoming sync without triggering another outgoing event
+// Apply incoming sync without triggering another outgoing event (echo prevention)
 function applySyncSilently(action, currentTime) {
+  if (!player || !playerReady) return;
   isSyncing = true;
   clearTimeout(syncTimeout);
 
-  if (!player || !playerReady) {
-    isSyncing = false;
-    return;
-  }
-
   try {
-    if (action === 'seek' || action === 'play') {
+    if (action === 'play' || action === 'seek') {
       const diff = Math.abs(player.getCurrentTime() - currentTime);
-      if (diff > 1.5) player.seekTo(currentTime, true); // only seek if off by > 1.5s
+      if (diff > 1.5) player.seekTo(currentTime, true);
     }
     if (action === 'play')  player.playVideo();
-    if (action === 'pause') player.pauseVideo();
-    if (action === 'seek')  { /* seek handled above */ }
-  } catch(err) {
+    if (action === 'pause') { player.seekTo(currentTime, true); player.pauseVideo(); }
+  } catch (err) {
     console.warn('[sync] player error:', err);
   }
 
-  syncTimeout = setTimeout(() => { isSyncing = false; }, 600);
+  syncTimeout = setTimeout(() => { isSyncing = false; }, 700);
 }
 
-// ─── Socket events — playback sync ───────────────────────────────────────────
-socket.on('sync-playback', ({ action, currentTime, senderName }) => {
+// Apply a stored playback state (for late joiners / reconnects)
+function applyState(state) {
+  if (!state || !player || !playerReady) return;
+  isSyncing = true;
+
+  let seekTo = state.currentTime || 0;
+  if (state.isPlaying) {
+    const elapsed = (Date.now() - (state.lastSyncedAt || Date.now())) / 1000;
+    seekTo = Math.max(0, seekTo + elapsed);
+  }
+
+  try {
+    player.seekTo(seekTo, true);
+    if (state.isPlaying) {
+      player.playVideo();
+    } else {
+      player.pauseVideo();
+    }
+  } catch (err) {
+    console.warn('[applyState] error:', err);
+  }
+
+  setTimeout(() => { isSyncing = false; }, 800);
+}
+
+// ─── Socket events — playback sync ────────────────────────────────────────────
+socket.on('sync-playback', ({ action, currentTime }) => {
   applySyncSilently(action, currentTime);
-});
-
-// ─── Socket events — room ─────────────────────────────────────────────────────
-socket.on('connect', () => {
-  setStatus('connected', 'Connected');
-});
-
-socket.on('disconnect', () => {
-  setStatus('error', 'Disconnected — reconnecting…');
-});
-
-socket.on('reconnect', () => {
-  setStatus('connected', 'Reconnected');
-  socket.emit('join-room', { displayName: DISPLAY_NAME, roomId: ROOM_ID });
-});
-
-// Received when we join an existing room (on page-load join handled in onPlayerReady)
-socket.on('room-joined', ({ isHost: hostFlag, playbackState }) => {
-  if (hostFlag) becomeHost();
-});
-
-socket.on('room-error', ({ message }) => {
-  overlayMsg.textContent = `⚠ ${message}`;
-  playerOverlay.classList.remove('fade-out');
-  addSystemMessage(message);
-  setStatus('error', 'Error');
-});
-
-socket.on('user-list', ({ users, hostSocketId }) => {
-  renderUserList(users);
-  // Hide overlay once at least one other person is in the room
-  if (users.length >= 2) {
-    playerOverlay.classList.add('fade-out');
-    setTimeout(() => { playerOverlay.style.display = 'none'; }, 400);
-  }
-});
-
-socket.on('user-joined', ({ displayName }) => {
-  addSystemMessage(`${displayName} joined the room 🎉`);
-});
-
-socket.on('user-left', ({ displayName }) => {
-  addSystemMessage(`${displayName} left the room`);
-});
-
-socket.on('promoted-to-host', () => {
-  becomeHost();
-  addSystemMessage('You are now the host 👑');
-});
-
-socket.on('video-changed', ({ videoId }) => {
-  currentVideoId = videoId;
-  if (player && playerReady) {
-    isSyncing = true;
-    player.loadVideoById(videoId);
-    setTimeout(() => { isSyncing = false; }, 800);
-  }
-  addSystemMessage('Host changed the video.');
 });
 
 // ─── Host controls ────────────────────────────────────────────────────────────
@@ -245,13 +275,12 @@ newVideoUrl.addEventListener('keydown', e => {
   if (e.key === 'Enter') changeVideoBtn.click();
 });
 
-// ─── User list rendering ──────────────────────────────────────────────────────
+// ─── User list ────────────────────────────────────────────────────────────────
 function renderUserList(users) {
   userListEl.innerHTML = '';
   users.forEach(({ displayName, isHost: uIsHost }) => {
     const li = document.createElement('li');
     li.className = 'user-item';
-
     const initials = displayName.slice(0, 2).toUpperCase();
     li.innerHTML = `
       <div class="user-avatar">${initials}</div>
@@ -329,30 +358,28 @@ function stopTyping() {
 
 socket.on('typing', ({ displayName }) => {
   if (displayName === DISPLAY_NAME) return;
-
-  // Clear any existing hide timer for this typer
   if (remoteTypers[displayName]) clearTimeout(remoteTypers[displayName]);
-
-  updateTypingDisplay(displayName);
-
+  updateTypingDisplay();
   remoteTypers[displayName] = setTimeout(() => {
     delete remoteTypers[displayName];
-    updateTypingDisplay(null);
+    updateTypingDisplay();
   }, 3000);
 });
 
-function updateTypingDisplay(name) {
+function updateTypingDisplay() {
   const names = Object.keys(remoteTypers);
   if (names.length === 0) {
     typingIndicator.classList.add('hidden');
     return;
   }
   typingIndicator.classList.remove('hidden');
-  const who = names.length === 1 ? names[0] : `${names[0]} and ${names.length - 1} other${names.length > 2 ? 's' : ''}`;
+  const who = names.length === 1
+    ? names[0]
+    : `${names[0]} and ${names.length - 1} other${names.length > 2 ? 's' : ''}`;
   typingText.textContent = `${who} is typing`;
 }
 
-// ─── Security helper ──────────────────────────────────────────────────────────
+// ─── XSS protection ───────────────────────────────────────────────────────────
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -361,6 +388,3 @@ function escapeHtml(str) {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;');
 }
-
-// ─── Set initial status ───────────────────────────────────────────────────────
-setStatus('', 'Connecting…');
